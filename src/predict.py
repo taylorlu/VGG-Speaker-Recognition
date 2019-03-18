@@ -16,9 +16,8 @@ import argparse
 parser = argparse.ArgumentParser()
 # set up training configuration.
 parser.add_argument('--gpu', default='', type=str)
-parser.add_argument('--resume', default='', type=str)
-parser.add_argument('--batch_size', default=16, type=int)
-parser.add_argument('--data_path', default='/media/weidi/2TB-2/datasets/voxceleb1/wav', type=str)
+parser.add_argument('--resume', default=r'C:\Users\donglu\Downloads\weights.h5', type=str)
+parser.add_argument('--data_path', default='4persons', type=str)
 # set up network configuration.
 parser.add_argument('--net', default='resnet34s', choices=['resnet34s', 'resnet34l'], type=str)
 parser.add_argument('--ghost_cluster', default=2, type=int)
@@ -32,6 +31,21 @@ parser.add_argument('--test_type', default='normal', choices=['normal', 'hard', 
 global args
 args = parser.parse_args()
 
+def similar(matrix):  # calc d-vectors similarity in pretty format output.
+    ids = matrix.shape[0]
+    for i in range(ids):
+        for j in range(ids):
+            dist = matrix[i,:]*matrix[j,:]
+            dist = np.linalg.norm(matrix[i,:] - matrix[j,:])
+            print('%.2f  ' % dist, end='')
+            if((j+1)%3==0 and j!=0):
+                print("| ", end='')
+        if((i+1)%3==0 and i!=0):
+            print('\n')
+            print("*"*80, end='')
+        print("\n")
+
+
 def main():
 
     # gpu configuration
@@ -41,22 +55,8 @@ def main():
     # ==================================
     #       Get Train/Val.
     # ==================================
-    print('==> calculating test({}) data lists...'.format(args.test_type))
-
-    if args.test_type == 'normal':
-        verify_list = np.loadtxt('../meta/voxceleb1_veri_test.txt', str)
-    elif args.test_type == 'hard':
-        verify_list = np.loadtxt('../meta/voxceleb1_veri_test_hard.txt', str)
-    elif args.test_type == 'extend':
-        verify_list = np.loadtxt('../meta/voxceleb1_veri_test_extended.txt', str)
-    else:
-        raise IOError('==> unknown test type.')
-
-    verify_lb = np.array([int(i[0]) for i in verify_list])
-    list1 = np.array([os.path.join(args.data_path, i[1]) for i in verify_list])
-    list2 = np.array([os.path.join(args.data_path, i[2]) for i in verify_list])
-
-    total_list = np.concatenate((list1, list2))
+    
+    total_list = [os.path.join(args.data_path, file) for file in os.listdir(args.data_path)]
     unique_list = np.unique(total_list)
 
     # ==================================
@@ -83,7 +83,6 @@ def main():
         # load the model if the imag_model == real_model.
         if os.path.isfile(args.resume):
             network_eval.load_weights(os.path.join(args.resume), by_name=True)
-            result_path = set_result_path(args)
             print('==> successfully loading model {}.'.format(args.resume))
         else:
             raise IOError("==> no checkpoint found at '{}'".format(args.resume))
@@ -94,10 +93,8 @@ def main():
 
     # The feature extraction process has to be done sample-by-sample,
     # because each sample is of different lengths.
-    total_length = len(unique_list)
-    feats, scores, labels = [], [], []
-    for c, ID in enumerate(unique_list):
-        if c % 50 == 0: print('Finish extracting features for {}/{}th wav.'.format(c, total_length))
+    feats = []
+    for ID in unique_list:
         specs = ut.load_data(ID, win_length=params['win_length'], sr=params['sampling_rate'],
                              hop_length=params['hop_length'], n_fft=params['nfft'],
                              spec_len=params['spec_len'], mode='eval')
@@ -106,36 +103,8 @@ def main():
         v = network_eval.predict(specs)
         feats += [v]
     
-    feats = np.array(feats)
-
-    # ==> compute the pair-wise similarity.
-    for c, (p1, p2) in enumerate(zip(list1, list2)):
-        ind1 = np.where(unique_list == p1)[0][0]
-        ind2 = np.where(unique_list == p2)[0][0]
-
-        v1 = feats[ind1, 0]
-        v2 = feats[ind2, 0]
-
-        scores += [np.sum(v1*v2)]
-        labels += [verify_lb[c]]
-        print('scores : {}, gt : {}'.format(scores[-1], verify_lb[c]))
-
-    scores = np.array(scores)
-    labels = np.array(labels)
-
-    np.save(os.path.join(result_path, 'prediction_scores.npy'), scores)
-    np.save(os.path.join(result_path, 'groundtruth_labels.npy'), labels)
-
-    eer, thresh = toolkits.calculate_eer(labels, scores)
-    print('==> model : {}, EER: {}'.format(args.resume, eer))
-
-
-def set_result_path(args):
-    model_path = args.resume
-    exp_path = model_path.split(os.sep)
-    result_path = os.path.join('../result', exp_path[2], exp_path[3])
-    if not os.path.exists(result_path): os.makedirs(result_path)
-    return result_path
+    feats = np.array(feats)[:,0,:]
+    similar(feats)
 
 
 if __name__ == "__main__":
